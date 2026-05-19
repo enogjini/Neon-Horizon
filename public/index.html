@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neon Horizon — General Admission Tickets</title>
+  <meta name="description" content="Get your general admission tickets to Neon Horizon, the most immersive electronic music experience of the year. Limited availability." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Background layers -->
+  <div class="bg-gradient"></div>
+  <div class="bg-noise"></div>
+  <canvas id="particle-canvas"></canvas>
+
+  <!-- Navigation -->
+  <nav class="navbar" role="navigation" aria-label="Main navigation">
+    <div class="nav-logo">
+      <span class="logo-icon">⬡</span>
+      <span class="logo-text">NEON HORIZON</span>
+    </div>
+    <div class="nav-links">
+      <a href="#lineup">Lineup</a>
+      <a href="#venue">Venue</a>
+      <a href="#faq">FAQ</a>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="hero" id="home">
+    <div class="hero-badge" id="availability-badge">
+      <span class="badge-dot"></span>
+      <span id="availability-text">Checking availability...</span>
+    </div>
+
+    <h1 class="hero-title">
+      <span class="title-line">NEON</span>
+      <span class="title-line gradient-text">HORIZON</span>
+    </h1>
+
+    <p class="hero-subtitle">
+      An immersive electronic music experience unlike anything you've felt before.
+    </p>
+
+    <div class="event-meta">
+      <div class="meta-item">
+        <span class="meta-icon">📅</span>
+        <div>
+          <span class="meta-label">Date</span>
+          <span class="meta-value">July 12, 2026</span>
+        </div>
+      </div>
+      <div class="meta-divider"></div>
+      <div class="meta-item">
+        <span class="meta-icon">🕗</span>
+        <div>
+          <span class="meta-label">Doors open</span>
+          <span class="meta-value">7:00 PM</span>
+        </div>
+      </div>
+      <div class="meta-divider"></div>
+      <div class="meta-item">
+        <span class="meta-icon">📍</span>
+        <div>
+          <span class="meta-label">Venue</span>
+          <span class="meta-value">The Warehouse, NYC</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ticket Card -->
+    <div class="ticket-card" id="ticket-card">
+      <div class="ticket-header">
+        <div class="ticket-type">
+          <span class="ticket-badge">GA</span>
+          <div>
+            <span class="ticket-name">General Admission</span>
+            <span class="ticket-perks">Entry + Open Dancefloor + 1 Welcome Drink</span>
+          </div>
+        </div>
+        <div class="ticket-price-display">
+          <span class="price-amount" id="price-display">$45.00</span>
+          <span class="price-per">per ticket</span>
+        </div>
+      </div>
+
+      <div class="ticket-divider">
+        <div class="divider-circle left"></div>
+        <div class="divider-line"></div>
+        <div class="divider-circle right"></div>
+      </div>
+
+      <div class="ticket-body">
+        <div class="qty-selector">
+          <span class="qty-label">Quantity</span>
+          <div class="qty-controls">
+            <button class="qty-btn" id="qty-decrease" aria-label="Decrease quantity">−</button>
+            <span class="qty-value" id="qty-display">1</span>
+            <button class="qty-btn" id="qty-increase" aria-label="Increase quantity">+</button>
+          </div>
+        </div>
+
+        <div class="total-row">
+          <span class="total-label">Total</span>
+          <span class="total-amount" id="total-display">$45.00</span>
+        </div>
+
+        <button class="buy-btn" id="buy-btn" aria-label="Buy tickets now">
+          <span class="btn-text">Buy Now</span>
+          <span class="btn-icon">→</span>
+        </button>
+
+        <p class="secure-note">
+          <span>🔒</span> Secure checkout · No hidden fees · Instant confirmation
+        </p>
+      </div>
+    </div>
+
+    <div class="scroll-hint">
+      <span>Scroll to explore</span>
+      <div class="scroll-arrow"></div>
+    </div>
+  </section>
+
+  <!-- Lineup Section -->
+  <section class="lineup-section" id="lineup">
+    <h2 class="section-title">Lineup</h2>
+    <div class="artists-grid">
+      <div class="artist-card headliner">
+        <div class="artist-time">10:00 PM – 2:00 AM</div>
+        <div class="artist-name">AXIOM</div>
+        <div class="artist-stage">Main Stage · Headliner</div>
+      </div>
+      <div class="artist-card">
+        <div class="artist-time">8:00 PM – 10:00 PM</div>
+        <div class="artist-name">Solstice</div>
+        <div class="artist-stage">Main Stage</div>
+      </div>
+      <div class="artist-card">
+        <div class="artist-time">7:00 PM – 8:00 PM</div>
+        <div class="artist-name">Luna Echo</div>
+        <div class="artist-stage">Side Stage</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Payment Processing Overlay -->
+  <div class="overlay" id="payment-overlay" role="dialog" aria-modal="true" aria-labelledby="overlay-title" hidden>
+    <div class="overlay-card">
+
+      <!-- State: Processing -->
+      <div class="overlay-state" id="state-processing">
+        <div class="spinner-ring"></div>
+        <h2 id="overlay-title" class="overlay-title">Processing Payment</h2>
+        <p class="overlay-subtitle">Please don't close this window…</p>
+        <div class="payment-steps">
+          <div class="step" id="step-1">
+            <div class="step-icon done" id="step-1-icon">✓</div>
+            <span>Payment initiated</span>
+          </div>
+          <div class="step step-active" id="step-2">
+            <div class="step-icon pending" id="step-2-icon">
+              <div class="step-spinner"></div>
+            </div>
+            <span>Awaiting confirmation</span>
+          </div>
+          <div class="step step-dim" id="step-3">
+            <div class="step-icon" id="step-3-icon">3</div>
+            <span>Tickets issued</span>
+          </div>
+        </div>
+        <div class="idempotency-info">
+          <span class="idem-label">Transaction ID</span>
+          <code class="idem-key" id="overlay-idem-key"></code>
+        </div>
+      </div>
+
+      <!-- State: Success -->
+      <div class="overlay-state" id="state-success" hidden>
+        <div class="success-burst">
+          <div class="success-ring"></div>
+          <div class="success-icon">🎟️</div>
+        </div>
+        <h2 class="overlay-title success-color">You're In!</h2>
+        <p class="overlay-subtitle">Your tickets have been confirmed. Check your email.</p>
+        <div class="confirmation-box">
+          <div class="conf-row">
+            <span>Event</span><span>Neon Horizon</span>
+          </div>
+          <div class="conf-row">
+            <span>Date</span><span>July 12, 2026</span>
+          </div>
+          <div class="conf-row">
+            <span>Qty</span><span id="conf-qty">–</span>
+          </div>
+          <div class="conf-row conf-total">
+            <span>Total Paid</span><span id="conf-total">–</span>
+          </div>
+        </div>
+        <button class="close-btn" id="close-success-btn">Done</button>
+      </div>
+
+      <!-- State: Error -->
+      <div class="overlay-state" id="state-error" hidden>
+        <div class="error-icon">✕</div>
+        <h2 class="overlay-title error-color">Payment Failed</h2>
+        <p class="overlay-subtitle" id="error-message">Something went wrong. Your card has not been charged.</p>
+        <button class="close-btn retry-btn" id="retry-btn">Try Again</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Account Creation Overlay -->
+  <div class="overlay" id="account-overlay" role="dialog" aria-modal="true" aria-labelledby="account-title" hidden>
+    <div class="overlay-card account-card">
+      <button class="overlay-close-btn" id="account-close-btn" aria-label="Close window">✕</button>
+      <h2 id="account-title" class="overlay-title">Checkout</h2>
+      <p class="overlay-subtitle" id="account-subtitle">Enter your details to receive your tickets.</p>
+      <form id="account-form" class="account-form">
+        <div class="input-group">
+          <label for="customerName">Full Name</label>
+          <input type="text" id="customerName" name="customerName" required placeholder="Enter your full name">
+        </div>
+        <div class="input-group">
+          <label for="customerEmail">Email Address</label>
+          <input type="email" id="customerEmail" name="customerEmail" required placeholder="Enter your email address">
+        </div>
+        <button type="submit" class="buy-btn" id="account-submit-btn">Complete Purchase</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

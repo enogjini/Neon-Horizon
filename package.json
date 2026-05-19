@@ -1,0 +1,19 @@
+{
+  "name": "ticket-store",
+  "version": "1.0.0",
+  "description": "General admission ticket store with idempotent payments",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.18.3",
+    "ioredis": "^5.10.1",
+    "ioredis-mock": "^8.13.1",
+    "nodemailer": "^8.0.7",
+    "pg": "^8.20.0"
+  }
+}
