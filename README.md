@@ -1,4 +1,4 @@
-# Soul of Frappe 🍓
+# Soul of Neon Horizon 🍓
 
 ## Vision
 To provide a seamless, high-performance ticketing experience that remains resilient under the most demanding concurrency levels. Frappe isn't just about selling tickets; it's about ensuring that every fan gets a fair shot at being part of the experience, without the friction of system failures, race conditions, or sold-out frustrations.
