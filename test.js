@@ -3,6 +3,10 @@ const http = require('http');
 
 const KEY = `test-${Date.now()}`;
 const BASE = 'http://localhost:3000';
+const CUSTOMER = {
+  customerName: 'Smoke Test',
+  customerEmail: `smoke+${Date.now()}@example.com`,
+};
 
 function post(path, body) {
   return new Promise((resolve, reject) => {
@@ -23,14 +27,14 @@ function post(path, body) {
 
 (async () => {
   console.log('\n── Test 1: POST /api/payments (new key) ──');
-  const r1 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2 });
+  const r1 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2, ...CUSTOMER });
   console.log('Status:', r1.status, '(expected 202)');
   console.log('Body:', JSON.stringify(r1.body, null, 2));
   const ok1 = r1.status === 202 && r1.body.status === 'pending' && !r1.body.replayed;
   console.log(ok1 ? '✅ PASS' : '❌ FAIL');
 
   console.log('\n── Test 2: POST /api/payments again (same key — idempotent) ──');
-  const r2 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2 });
+  const r2 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2, ...CUSTOMER });
   console.log('Status:', r2.status, '(expected 200)');
   console.log('Body:', JSON.stringify(r2.body, null, 2));
   const ok2 = r2.status === 200 && r2.body.replayed === true;
@@ -40,10 +44,10 @@ function post(path, body) {
   await new Promise(r => setTimeout(r, 5000));
 
   console.log('\n── Test 4: POST same key again — should now return status: complete ──');
-  const r3 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2 });
+  const r3 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2, ...CUSTOMER });
   console.log('Status:', r3.status);
   console.log('Body:', JSON.stringify(r3.body, null, 2));
-  const ok3 = r3.body.status === 'complete';
+  const ok3 = r3.body.status === 'complete' && r3.body.confirmation && r3.body.confirmation.status === 'sent';
   console.log(ok3 ? '✅ PASS' : '❌ FAIL');
 
   console.log('\n── Test 5: Missing idempotency_key → 400 ──');

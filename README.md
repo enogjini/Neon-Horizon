@@ -55,6 +55,43 @@ In a high-traffic environment, network glitches are inevitable. Frappe implement
 ### 4. Real-time Feedback (SSE)
 We believe in keeping the user informed. Using **Server-Sent Events (SSE)**, the frontend receives instantaneous updates on payment status changes. This is synchronized across our distributed workers via Redis Pub/Sub, ensuring that no matter which worker the user is connected to, they get their confirmation immediately.
 
+## Production Foundations
+
+### Durable Redis
+Set `REDIS_URL` in production. Without it, the app exits instead of silently falling back to the local in-memory Redis mock, because inventory and cross-worker SSE updates must survive restarts and scale across instances.
+
+### Confirmation Email Outbox
+Payment completion now creates a durable `email_jobs` record with an idempotency key like `ticket-confirmation:<payment_id>`. The outbox worker claims ready jobs with PostgreSQL row locks, sends the confirmation through `mailer.js`, records the provider message id, and retries failed sends with backoff.
+
+### Mailgun setup
+Set these environment variables to send confirmation emails through Mailgun:
+
+```bash
+MAILGUN_API_KEY=your-mailgun-private-key
+MAILGUN_DOMAIN=mg.your-domain.com
+MAILGUN_FROM_EMAIL=tickets@mg.your-domain.com
+```
+
+Optional:
+
+```bash
+MAILGUN_BASE_URL=https://api.mailgun.net
+MAILGUN_REGION=us
+```
+
+If Mailgun is configured, the app will use it before falling back to Brevo, SendGrid, SMTP, or the development Ethereal inbox.
+
+### Account Passwords
+Account signup stores `scrypt` password hashes through Node's built-in crypto module. Login verifies hashes with timing-safe comparison and never compares plain-text passwords.
+
+Run database setup after pulling this version:
+
+```bash
+npm run db:init
+```
+
+For long-running Node deployments, `npm start` starts the email worker with the web server. For serverless deployments, payment completion drains one queued confirmation inline so the persisted outbox still prevents duplicate sends.
+
 ## Future Roadmap
 - [ ] **Global Distributed Cache**: Moving from mock-Redis to a managed cluster.
 - [ ] **Dynamic Load Scaling**: Automatically spinning up workers based on traffic spikes.

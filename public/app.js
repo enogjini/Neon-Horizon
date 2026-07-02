@@ -62,6 +62,8 @@ const stateError      = document.getElementById('state-error');
 const overlayIdemKey  = document.getElementById('overlay-idem-key');
 const confQty         = document.getElementById('conf-qty');
 const confTotal       = document.getElementById('conf-total');
+const confirmationNote = document.getElementById('confirmation-note');
+const confirmationLink = document.getElementById('confirmation-link');
 const errorMessage    = document.getElementById('error-message');
 const closeSuccessBtn = document.getElementById('close-success-btn');
 const retryBtn        = document.getElementById('retry-btn');
@@ -144,7 +146,7 @@ async function initiatePayment() {
   console.log('[app] payment created:', data);
 
   if (data.status === 'complete') {
-    showSuccess(data.ticket_qty, data.amount_cents || (data.ticket_qty * PRICE_PER_TICKET * 100));
+    showSuccess(data.ticket_qty, data.amount_cents || (data.ticket_qty * PRICE_PER_TICKET * 100), data.confirmation);
     return;
   }
 
@@ -173,7 +175,8 @@ function openSSEConnection(idempotencyKey) {
     evtSource.close();
     state.sseSource = null;
     const total_cents = state.qty * PRICE_PER_TICKET * 100;
-    showSuccess(state.qty, total_cents);
+    const payload = JSON.parse(e.data || '{}');
+    showSuccess(state.qty, total_cents, payload.confirmation);
   });
 
   evtSource.addEventListener('payment_failed', (e) => {
@@ -206,6 +209,11 @@ function showOverlay(stateName, errMsg) {
   stateProcessing.hidden = true;
   stateSuccess.hidden    = true;
   stateError.hidden      = true;
+  confirmationNote.hidden = true;
+  confirmationNote.textContent = '';
+  confirmationLink.hidden = true;
+  confirmationLink.removeAttribute('href');
+  confirmationLink.textContent = '';
 
   if (stateName === 'processing') {
     stateProcessing.hidden = false;
@@ -218,10 +226,24 @@ function showOverlay(stateName, errMsg) {
   }
 }
 
-function showSuccess(qty, amount_cents) {
+function showSuccess(qty, amount_cents, confirmation = {}) {
   confQty.textContent   = `${qty} × GA Ticket${qty > 1 ? 's' : ''}`;
   confTotal.textContent = `$${(amount_cents / 100).toFixed(2)}`;
   showOverlay('success');
+
+  if (confirmation && confirmation.previewUrl) {
+    confirmationNote.hidden = false;
+    confirmationNote.textContent = 'Local confirmation preview ready — open it to view the email.';
+    confirmationLink.hidden = false;
+    confirmationLink.href = confirmation.previewUrl;
+    confirmationLink.textContent = 'Open confirmation preview';
+  } else if (confirmation && confirmation.status === 'sent') {
+    confirmationNote.hidden = false;
+    confirmationNote.textContent = 'Confirmation email is being delivered to your inbox.';
+  } else {
+    confirmationNote.hidden = false;
+    confirmationNote.textContent = 'We’re preparing your confirmation email.';
+  }
 
   // 🎉 Celebratory confetti!
   const duration = 2.5 * 1000;

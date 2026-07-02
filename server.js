@@ -2,12 +2,13 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const inventory = require('./inventory');
+const { startEmailWorker } = require('./emailOutbox');
 
 // ── App Setup (Single Process for Mock Compatibility) ───────────────────────
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log(`\n🚀 Server is running in Single-Process Mode (Local Mock)`);
+console.log('\nNeon Horizon server booting');
 
 // Initialize shared inventory
 inventory.init().catch(err => console.error('Inventory init error:', err));
@@ -25,6 +26,7 @@ app.use('/api/payments', require('./routes/payments'));
 app.use('/api/webhook', require('./routes/webhook'));
 app.use('/api/availability', require('./routes/availability'));
 app.use('/api/accounts', require('./routes/accounts'));
+app.use('/api/attendees', require('./routes/attendees'));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -60,4 +62,5 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Worker ${process.pid} started`);
   });
+  startEmailWorker();
 }
