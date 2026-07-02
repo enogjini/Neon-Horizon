@@ -21,6 +21,45 @@ function hasSendGrid() {
   return key && key.length > 12 && !/your_api_key|placeholder/i.test(key);
 }
 
+function mailgunApiKey() {
+  return (
+    process.env.MAILGUN_API_KEY ||
+    process.env.MAILGUN_PRIVATE_API_KEY ||
+    ''
+  ).trim();
+}
+
+function mailgunDomain() {
+  return (process.env.MAILGUN_DOMAIN || '').trim();
+}
+
+function mailgunBaseUrl() {
+  if (process.env.MAILGUN_BASE_URL) {
+    return process.env.MAILGUN_BASE_URL.replace(/\/+$/, '');
+  }
+
+  return process.env.MAILGUN_REGION === 'eu'
+    ? 'https://api.eu.mailgun.net'
+    : 'https://api.mailgun.net';
+}
+
+function hasMailgun() {
+  const key = mailgunApiKey();
+  const domain = mailgunDomain();
+  return Boolean(key && domain && !/your_api_key|placeholder/i.test(key));
+}
+
+function warnPartialMailgunConfig() {
+  const key = mailgunApiKey();
+  const domain = mailgunDomain();
+  if (!key && !domain) return;
+  if (!key || !domain) {
+    console.warn(
+      '[mailer] MAILGUN_API_KEY and MAILGUN_DOMAIN must both be set. Email will not use Mailgun until both are configured.'
+    );
+  }
+}
+
 function brevoSmtpLogin() {
   return (
     process.env.BREVO_SMTP_LOGIN ||
@@ -58,6 +97,7 @@ function warnPartialBrevoConfig() {
 async function createTransport() {
   if (hasBrevo()) {
     const port = parseInt(process.env.BREVO_SMTP_PORT || '587', 10);
+    console.log('[mailer] using Brevo SMTP transport');
     return {
       transporter: nodemailer.createTransport({
         host: 'smtp-relay.brevo.com',
@@ -73,6 +113,7 @@ async function createTransport() {
   }
 
   if (hasSendGrid()) {
+    console.log('[mailer] using SendGrid SMTP transport');
     return {
       transporter: nodemailer.createTransport({
         host: 'smtp.sendgrid.net',
@@ -84,6 +125,7 @@ async function createTransport() {
   }
 
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    console.log('[mailer] using custom SMTP transport');
     return {
       transporter: nodemailer.createTransport({
         host: process.env.SMTP_HOST,
@@ -99,6 +141,8 @@ async function createTransport() {
   }
 
   warnPartialBrevoConfig();
+  warnPartialMailgunConfig();
+  console.log('[mailer] no real SMTP credentials found; falling back to Ethereal test inbox');
 
   const testAccount = await nodemailer.createTestAccount();
   return {
@@ -112,11 +156,63 @@ async function createTransport() {
   };
 }
 
+async function sendMailgunEmail({ from, to, subject, text, html }) {
+  if (typeof fetch !== 'function') {
+    throw new Error('Mailgun API transport requires Node.js 18+ global fetch support.');
+  }
+
+  const domain = mailgunDomain();
+  const endpoint = `${mailgunBaseUrl()}/v3/${encodeURIComponent(domain)}/messages`;
+  const body = new FormData();
+  body.set('from', from);
+  body.set('to', to);
+  body.set('subject', subject);
+  body.set('text', text);
+  body.set('html', html);
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`api:${mailgunApiKey()}`).toString('base64')}`,
+    },
+    body,
+  });
+
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    data = { message: raw };
+  }
+
+  if (!res.ok) {
+    const message = data.message || raw || `Mailgun API returned ${res.status}`;
+    const err = new Error(`Mailgun send failed: ${message}`);
+    err.response = raw;
+    err.status = res.status;
+    throw err;
+  }
+
+  console.log(`[mailer] confirmation sent (mailgun) messageId=${data.id || 'n/a'}`);
+  return { mode: 'mailgun', messageId: data.id || null, previewUrl: null };
+}
+
+function senderAddress() {
+  return (
+    process.env.MAILGUN_FROM_EMAIL ||
+    process.env.FROM_EMAIL ||
+    (mailgunDomain() ? `tickets@${mailgunDomain()}` : 'tickets@neonhorizon.example.com')
+  ).trim();
+}
+
 function buildBodies(record) {
   const name = record.customer_name ? record.customer_name.trim() : 'there';
   const safeName = escapeHtml(name);
   const qty = record.ticket_qty;
-  const total = (qty * PRICE_PER_TICKET_USD).toFixed(2);
+  const total = record.amount_cents
+    ? (record.amount_cents / 100).toFixed(2)
+    : (qty * PRICE_PER_TICKET_USD).toFixed(2);
 
   const text = `Hello ${name},
 
@@ -162,29 +258,42 @@ Bring this email (printed or on your phone) for entry.
 
 /**
  * Sends order confirmation when payment completes.
- * Uses Brevo (BREVO_SMTP_*), or SENDGRID_API_KEY, or SMTP_* env vars, or Ethereal (dev — check logs for preview URL).
+ * Uses Mailgun, Brevo, SendGrid, SMTP, or Ethereal (dev — check logs for preview URL).
  * Skips if `email_or_phone` is not a valid email (e.g. phone-only).
  */
 async function sendTicketConfirmation(record) {
-  if (!record || !record.email_or_phone) return;
+  if (!record || !record.email_or_phone) return null;
 
   const to = String(record.email_or_phone).trim();
   if (!looksLikeEmail(to)) {
     console.log(`[mailer] skip confirmation — need a valid email, got: ${to}`);
-    return;
+    return null;
   }
 
   const { text, html } = buildBodies(record);
+  const from = `"Neon Horizon" <${senderAddress()}>`;
+  const subject = 'Your Neon Horizon tickets — confirmed';
+
+  if (hasMailgun()) {
+    console.log(`[mailer] sending confirmation transport=mailgun to=${to}`);
+    try {
+      return await sendMailgunEmail({ from, to, subject, text, html });
+    } catch (err) {
+      const extra = err.response ? ` api=${String(err.response).slice(0, 500)}` : '';
+      console.error('[mailer] Mailgun send failed:', err.message || err, extra);
+      throw err;
+    }
+  }
+
   const { transporter, mode } = await createTransport();
-  const from = (process.env.FROM_EMAIL || 'tickets@neonhorizon.example.com').trim();
 
   console.log(`[mailer] sending confirmation transport=${mode} to=${to}`);
 
   try {
     const info = await transporter.sendMail({
-      from: `"Neon Horizon" <${from}>`,
+      from,
       to,
-      subject: 'Your Neon Horizon tickets — confirmed',
+      subject,
       text,
       html,
     });
@@ -192,8 +301,10 @@ async function sendTicketConfirmation(record) {
     if (mode === 'ethereal') {
       const url = nodemailer.getTestMessageUrl(info);
       console.log(`[mailer] dev inbox — preview: ${url}`);
+      return { mode, messageId: info.messageId || null, previewUrl: url };
     } else {
       console.log(`[mailer] confirmation sent (${mode}) messageId=${info.messageId || 'n/a'}`);
+      return { mode, messageId: info.messageId || null, previewUrl: null };
     }
   } catch (err) {
     const extra = err.response ? ` smtp=${String(err.response).slice(0, 500)}` : '';
@@ -202,4 +313,9 @@ async function sendTicketConfirmation(record) {
   }
 }
 
-module.exports = { sendTicketConfirmation, looksLikeEmail };
+module.exports = {
+  sendTicketConfirmation,
+  sendMailgunEmail,
+  looksLikeEmail,
+  hasMailgun,
+};

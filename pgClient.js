@@ -4,6 +4,9 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/frappe',
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
 pool.on('error', (err) => {
@@ -28,12 +31,49 @@ async function initDB() {
         id SERIAL PRIMARY KEY,
         idempotency_key VARCHAR(255) UNIQUE NOT NULL,
         ticket_qty INTEGER NOT NULL,
+        amount_cents INTEGER,
+        customer_name VARCHAR(255),
         email_or_phone VARCHAR(255) NOT NULL,
         status VARCHAR(50) DEFAULT 'pending',
         processor_id VARCHAR(255),
+        email_sent_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_cents INTEGER;');
+    await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255);');
+    await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMP;');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS email_jobs (
+        id SERIAL PRIMARY KEY,
+        idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+        type VARCHAR(64) NOT NULL,
+        payment_id INTEGER REFERENCES payments(id) ON DELETE CASCADE,
+        status VARCHAR(32) NOT NULL DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 5,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        locked_at TIMESTAMP,
+        next_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        sent_at TIMESTAMP,
+        provider_message_id VARCHAR(255),
+        last_error TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_email_jobs_ready
+      ON email_jobs (status, next_attempt_at, id);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_email_jobs_payment
+      ON email_jobs (payment_id);
     `);
 
     await client.query(`
@@ -42,6 +82,19 @@ async function initDB() {
         total_capacity INTEGER NOT NULL,
         available INTEGER NOT NULL
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS attendees (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_attendees_email ON attendees (email);
     `);
 
     // Initialize inventory if empty

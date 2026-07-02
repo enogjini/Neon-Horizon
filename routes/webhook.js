@@ -4,7 +4,7 @@ const db         = require('../db');
 const sseClients = require('../sseClients');
 const inventory  = require('../inventory');
 const redis      = require('../redisClient');
-const { sendTicketConfirmation } = require('../mailer');
+const emailOutbox = require('../emailOutbox');
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'dev-secret';
 
@@ -22,7 +22,7 @@ router.post('/', async (req, res) => {
 
   const newStatus = processor_status === 'success' ? 'complete' : 'failed';
 
-  const updated = await db.updateStatus(idempotency_key, newStatus);
+  const updated = await db.updateStatus(idempotency_key, newStatus, payment_id);
   if (!updated) {
     console.warn(`[webhook] no payment found for key: ${idempotency_key}`);
     return res.status(404).json({ error: 'Payment not found' });
@@ -32,7 +32,12 @@ router.post('/', async (req, res) => {
   console.log(`[webhook] payment ${idempotency_key} → ${newStatus}`);
   
   if (newStatus === 'complete' && record && record.email_or_phone) {
-    sendTicketConfirmation(record).catch(err => console.error('[webhook] confirmation email error:', err));
+    try {
+      const job = await emailOutbox.enqueueTicketConfirmation(record);
+      if (job) await emailOutbox.processEmailJobById(job.id);
+    } catch (err) {
+      console.error('[webhook] confirmation queue error:', err.message || err);
+    }
   }
   
   if (newStatus === 'failed' && record) {

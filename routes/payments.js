@@ -3,10 +3,51 @@ const router  = express.Router();
 const db      = require('../db');
 const sseClients = require('../sseClients');
 const inventory = require('../inventory');
-const { sendTicketConfirmation } = require('../mailer');
+const emailOutbox = require('../emailOutbox');
+const redis = require('../redisClient');
 
 // Price per ticket in cents ($45.00)
 const PRICE_PER_TICKET_CENTS = 4500;
+
+async function finalizePayment(idempotency_key) {
+  const updated = await db.updateStatus(idempotency_key, 'complete');
+  const completedRecord = await db.findByKey(idempotency_key);
+
+  let confirmation = null;
+  if (completedRecord) {
+    try {
+      const job = await emailOutbox.enqueueTicketConfirmation(completedRecord);
+      if (job) {
+        confirmation = await emailOutbox.processEmailJobById(job.id);
+      }
+    } catch (err) {
+      console.error('[payments] confirmation queue failed:', err && err.message, err);
+    }
+  }
+
+  const confirmationInfo = confirmation && confirmation.ok
+    ? { status: confirmation.status, mode: confirmation.mode, previewUrl: confirmation.previewUrl, messageId: confirmation.messageId }
+    : { status: 'queued', mode: null, previewUrl: null, messageId: null };
+
+  // Notify SSE subscribers in-process and across workers.
+  const payload = JSON.stringify({ status: 'complete', idempotency_key, confirmation: confirmationInfo });
+  const clients = sseClients.get(idempotency_key) || [];
+  clients.forEach(clientRes => {
+    try {
+      clientRes.write(`event: payment_complete\ndata: ${payload}\n\n`);
+    } catch (e) {
+      console.error('[payments] SSE write error:', e.message);
+    }
+  });
+  sseClients.delete(idempotency_key);
+  redis.publish('sse_updates', JSON.stringify({ idempotency_key, event: 'payment_complete', payload }));
+
+  return {
+    updated,
+    completedRecord: completedRecord ? { ...completedRecord, confirmation: confirmationInfo } : completedRecord,
+    confirmation: confirmationInfo,
+  };
+}
 
 /**
  * POST /api/payments
@@ -31,7 +72,10 @@ router.post('/', async (req, res) => {
   const existing = await db.findByKey(idempotency_key);
   if (existing) {
     console.log(`[payments] replayed key: ${idempotency_key} (status: ${existing.status})`);
-    return res.status(200).json({ ...existing, replayed: true });
+    const confirmation = existing.status === 'complete' && existing.email_sent_at
+      ? { status: 'sent', mode: 'already-sent', previewUrl: null, messageId: null }
+      : null;
+    return res.status(200).json({ ...existing, replayed: true, confirmation });
   }
   // ── Real-time Inventory Check ─────────────────────────────────────────────
   const reserved = await inventory.reserve(qty);
@@ -51,36 +95,21 @@ router.post('/', async (req, res) => {
     emailOrPhone: customerEmail 
   });
 
+  if (customerName || customerEmail) {
+    await db.addAttendee({ name: customerName, email: customerEmail });
+  }
 
   console.log(`[payments] created payment #${record.id} for key: ${idempotency_key}`);
 
   // ── Call payment processor (simulated, non-blocking) ──────────────────────
   // In production: POST to Stripe / Adyen / etc. with the idempotency_key header.
   if (process.env.VERCEL) {
-    // 1. Mark payment as complete synchronously to prevent background timer freeze on Vercel
-    await db.updateStatus(idempotency_key, 'complete');
-    
-    // 2. Fetch the fully completed record
-    const completedRecord = await db.findByKey(idempotency_key);
-    
-    // 3. Order confirmation — must await on Vercel: the invocation freezes after the
-    //    response is sent, so a fire-and-forget SMTP call often never completes.
-    if (completedRecord && completedRecord.email_or_phone) {
-      try {
-        await sendTicketConfirmation({
-          ...completedRecord,
-          customer_name: customerName || completedRecord.customer_name,
-        });
-      } catch (err) {
-        console.error('[payments] confirmation email failed:', err && err.message, err);
-      }
-    }
-
+    const { completedRecord } = await finalizePayment(idempotency_key);
     return res.status(200).json({ ...completedRecord, replayed: false });
-  } else {
-    callMockProcessor(idempotency_key, amount_cents);
-    return res.status(202).json({ ...record, replayed: false });
   }
+
+  callMockProcessor(idempotency_key, amount_cents);
+  return res.status(202).json({ ...record, replayed: false });
 });
 
 /**
@@ -107,7 +136,7 @@ router.get('/:idempotency_key/status', async (req, res) => {
   // If already complete (e.g. page refresh after success), fire immediately
   const existing = await db.findByKey(idempotency_key);
   if (existing && existing.status === 'complete') {
-    res.write(`event: payment_complete\ndata: ${JSON.stringify({ status: 'complete' })}\n\n`);
+    res.write(`event: payment_complete\ndata: ${JSON.stringify({ status: 'complete', confirmation: { status: 'sent', mode: null, previewUrl: null, messageId: null } })}\n\n`);
   }
 
   // Clean up on disconnect
@@ -125,34 +154,16 @@ router.get('/:idempotency_key/status', async (req, res) => {
 /**
  * Calls the external mock payment processor running on port 3001.
  */
-function callMockProcessor(idempotency_key, amount_cents) {
-  const http = require('http');
-  const port = process.env.PORT || 3000;
-  const webhook_url = `http://localhost:${port}/api/webhook`;
+function callMockProcessor(idempotency_key) {
+  const delayMs = parseInt(process.env.MOCK_PROCESSOR_DELAY_MS || '2500', 10);
 
-  const body = JSON.stringify({
-    idempotency_key,
-    amount_cents,
-    currency: 'usd',
-    webhook_url
-  });
-
-  const req = http.request({
-    hostname: 'localhost',
-    port: process.env.PROCESSOR_PORT || 3001,
-    path: '/charge',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
-    },
-  });
-
-  req.on('error', err =>
-    console.error('[payments] call to mock processor failed:', err.message)
-  );
-  req.write(body);
-  req.end();
+  setTimeout(async () => {
+    try {
+      await finalizePayment(idempotency_key);
+    } catch (err) {
+      console.error('[payments] local mock processor failed:', err.message || err);
+    }
+  }, delayMs);
 }
 
 module.exports = router;
