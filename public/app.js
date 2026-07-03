@@ -367,16 +367,11 @@ overlay.addEventListener('click', (e) => {
 (function initAvailabilityStream() {
   const availabilityText = document.getElementById('availability-text');
   const availabilityBadge = document.getElementById('availability-badge');
-  
-  const evtSource = new EventSource('/api/availability/status');
 
-  evtSource.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    const { available, total } = data;
-    
+  function setAvailability(data) {
+    const { available } = data;
     availabilityText.textContent = `${available} Tickets Remaining`;
-    
-    // Add some visual urgency
+
     if (available === 0) {
       availabilityText.textContent = 'Sold Out';
       availabilityBadge.classList.add('sold-out');
@@ -384,9 +379,35 @@ overlay.addEventListener('click', (e) => {
       buyBtn.textContent = 'Sold Out';
     } else if (available < 10) {
       availabilityBadge.classList.add('low-stock');
+      availabilityBadge.classList.remove('sold-out');
+      buyBtn.disabled = false;
+      buyBtn.textContent = 'Buy Now';
     } else {
       availabilityBadge.classList.remove('low-stock', 'sold-out');
+      buyBtn.disabled = false;
+      buyBtn.textContent = 'Buy Now';
     }
+  }
+
+  async function bootstrapAvailability() {
+    try {
+      const response = await fetch('/api/availability');
+      if (!response.ok) throw new Error('Availability fetch failed');
+      const data = await response.json();
+      setAvailability(data);
+    } catch (err) {
+      console.error('[app] availability fetch failed:', err);
+      availabilityText.textContent = 'Limited Tickets Available';
+    }
+  }
+
+  bootstrapAvailability();
+
+  const evtSource = new EventSource('/api/availability/status');
+
+  evtSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    setAvailability(data);
   };
 
   evtSource.onerror = () => {
