@@ -89,6 +89,20 @@ async function processEmailJobById(id) {
   return processClaimedEmailJob(job);
 }
 
+async function processTicketConfirmationInline(payment) {
+  const job = await enqueueTicketConfirmation(payment);
+  if (!job) return null;
+  return processClaimedEmailJob({
+    id: job.id,
+    type: job.type,
+    payment_id: job.payment_id,
+    payload: job.payload,
+    attempts: job.attempts,
+    max_attempts: job.max_attempts,
+    status: job.status,
+  });
+}
+
 async function processQueuedEmails({ limit = DEFAULT_DRAIN_LIMIT } = {}) {
   let processed = 0;
 
@@ -144,6 +158,7 @@ function startEmailWorker({ pollMs = DEFAULT_POLL_MS } = {}) {
 module.exports = {
   enqueueTicketConfirmation,
   processEmailJobById,
+  processTicketConfirmationInline,
   processQueuedEmails,
   processOneEmailJob,
   startEmailWorker,
