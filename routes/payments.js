@@ -16,9 +16,13 @@ async function finalizePayment(idempotency_key) {
   let confirmation = null;
   if (completedRecord) {
     try {
-      const job = await emailOutbox.enqueueTicketConfirmation(completedRecord);
-      if (job) {
-        confirmation = await emailOutbox.processEmailJobById(job.id);
+      if (!process.env.VERCEL && process.env.NODE_ENV !== 'production') {
+        confirmation = await emailOutbox.processTicketConfirmationInline(completedRecord);
+      } else {
+        const job = await emailOutbox.enqueueTicketConfirmation(completedRecord);
+        if (job) {
+          confirmation = await emailOutbox.processEmailJobById(job.id);
+        }
       }
     } catch (err) {
       console.error('[payments] confirmation queue failed:', err && err.message, err);

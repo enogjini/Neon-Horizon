@@ -16,6 +16,15 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+function parseTruthyEnv(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true';
+}
+
+function isProductionDeployment() {
+  return process.env.NODE_ENV === 'production' || parseTruthyEnv(process.env.VERCEL);
+}
+
 function hasSendGrid() {
   const key = process.env.SENDGRID_API_KEY;
   return key && key.length > 12 && !/your_api_key|placeholder/i.test(key);
@@ -198,6 +207,19 @@ async function sendMailgunEmail({ from, to, subject, text, html }) {
   return { mode: 'mailgun', messageId: data.id || null, previewUrl: null };
 }
 
+async function createEtherealTransport() {
+  const testAccount = await nodemailer.createTestAccount();
+  return {
+    transporter: nodemailer.createTransport({
+      host: 'smtp.ethereal.email',
+      port: 587,
+      secure: false,
+      auth: { user: testAccount.user, pass: testAccount.pass },
+    }),
+    mode: 'ethereal',
+  };
+}
+
 function senderAddress() {
   return (
     process.env.MAILGUN_FROM_EMAIL ||
@@ -281,7 +303,16 @@ async function sendTicketConfirmation(record) {
     } catch (err) {
       const extra = err.response ? ` api=${String(err.response).slice(0, 500)}` : '';
       console.error('[mailer] Mailgun send failed:', err.message || err, extra);
-      throw err;
+      if (isProductionDeployment()) {
+        throw err;
+      }
+      console.warn('[mailer] local fallback enabled; using Ethereal because Mailgun failed');
+
+      const { transporter, mode } = await createEtherealTransport();
+      const info = await transporter.sendMail({ from, to, subject, text, html });
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`[mailer] confirmation sent (fallback ${mode}) messageId=${info.messageId || 'n/a'} previewUrl=${previewUrl}`);
+      return { mode, messageId: info.messageId || null, previewUrl };
     }
   }
 
