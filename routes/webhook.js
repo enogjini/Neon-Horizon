@@ -24,12 +24,12 @@ router.post('/', async (req, res) => {
 
   const updated = await db.updateStatus(idempotency_key, newStatus, payment_id);
   if (!updated) {
-    console.warn(`[webhook] no payment found for key: ${idempotency_key}`);
+    console.warn(`[webhook] payment_not_found key=${idempotency_key} status=${processor_status}`);
     return res.status(404).json({ error: 'Payment not found' });
   }
 
   const record = await db.findByKey(idempotency_key);
-  console.log(`[webhook] payment ${idempotency_key} → ${newStatus}`);
+  console.log(`[webhook] processed key=${idempotency_key} status=${newStatus} payment_id=${payment_id || 'n/a'}`);
   
   if (newStatus === 'complete' && record && record.email_or_phone) {
     try {
@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
   
   if (newStatus === 'failed' && record) {
     await inventory.release(record.ticket_qty);
-    console.log(`[webhook] released ${record.ticket_qty} tickets back to pool`);
+    console.log(`[webhook] released qty=${record.ticket_qty} key=${idempotency_key}`);
   }
 
   // ── Notify SSE clients ────────────────────────────────────────────────────

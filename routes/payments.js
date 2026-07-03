@@ -66,16 +66,28 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'idempotency_key and ticket_qty are required' });
   }
 
+  if (typeof idempotency_key !== 'string' || idempotency_key.trim().length < 3) {
+    return res.status(400).json({ error: 'idempotency_key must be a non-empty string' });
+  }
+
   const qty = parseInt(ticket_qty, 10);
   if (isNaN(qty) || qty < 1 || qty > 10) {
     return res.status(400).json({ error: 'ticket_qty must be between 1 and 10' });
+  }
+
+  if (customerName !== undefined && typeof customerName !== 'string') {
+    return res.status(400).json({ error: 'customerName must be a string' });
+  }
+
+  if (customerEmail !== undefined && typeof customerEmail !== 'string') {
+    return res.status(400).json({ error: 'customerEmail must be a string' });
   }
 
   // ── Idempotency check ─────────────────────────────────────────────────────
 
   const existing = await db.findByKey(idempotency_key);
   if (existing) {
-    console.log(`[payments] replayed key: ${idempotency_key} (status: ${existing.status})`);
+    console.log(`[payments] replayed key=${idempotency_key} status=${existing.status} qty=${existing.ticket_qty}`);
     const confirmation = existing.status === 'complete' && existing.email_sent_at
       ? { status: 'sent', mode: 'already-sent', previewUrl: null, messageId: null }
       : null;
@@ -84,7 +96,8 @@ router.post('/', async (req, res) => {
   // ── Real-time Inventory Check ─────────────────────────────────────────────
   const reserved = await inventory.reserve(qty);
   if (!reserved) {
-    console.warn(`[payments] sold out (requested: ${qty}, available: ${await inventory.getAvailable()})`);
+    const remaining = await inventory.getAvailable();
+    console.warn(`[payments] sold_out key=${idempotency_key} requested=${qty} remaining=${remaining}`);
     return res.status(403).json({ error: 'Tickets are currently sold out.', code: 'SOLD_OUT' });
   }
 
@@ -103,7 +116,7 @@ router.post('/', async (req, res) => {
     await db.addAttendee({ name: customerName, email: customerEmail });
   }
 
-  console.log(`[payments] created payment #${record.id} for key: ${idempotency_key}`);
+  console.log(`[payments] created id=${record.id} key=${idempotency_key} qty=${qty} amount_cents=${amount_cents}`);
 
   // ── Call payment processor (simulated, non-blocking) ──────────────────────
   // In production: POST to Stripe / Adyen / etc. with the idempotency_key header.

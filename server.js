@@ -3,6 +3,25 @@ const express = require('express');
 const path = require('path');
 const inventory = require('./inventory');
 const { startEmailWorker } = require('./emailOutbox');
+const { initDB } = require('./pgClient');
+
+function validateProductionEnv() {
+  if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') return;
+
+  const required = ['DATABASE_URL', 'REDIS_URL'];
+  const missing = required.filter((key) => !process.env[key] || String(process.env[key]).trim() === '');
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required production environment variables: ${missing.join(', ')}`);
+  }
+}
+
+try {
+  validateProductionEnv();
+} catch (err) {
+  console.error('[startup] production env validation failed:', err.message);
+  process.exit(1);
+}
 
 // ── App Setup (Single Process for Mock Compatibility) ───────────────────────
 const app = express();
@@ -10,8 +29,21 @@ const PORT = process.env.PORT || 3000;
 
 console.log('\nNeon Horizon server booting');
 
-// Initialize shared inventory
-inventory.init().catch(err => console.error('Inventory init error:', err));
+async function initializeRuntime() {
+  try {
+    await initDB();
+    await inventory.init();
+    console.log('[startup] database and inventory initialized');
+  } catch (err) {
+    console.error('[startup] initialization failed:', err.message || err);
+    throw err;
+  }
+}
+
+initializeRuntime().catch((err) => {
+  console.error('[startup] runtime initialization failed, exiting');
+  process.exit(1);
+});
 
 // Performance Tweaks
 app.disable('x-powered-by');
@@ -21,6 +53,25 @@ app.use(require('cors')());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+const requestCounts = new Map();
+app.use((req, res, next) => {
+  const key = req.ip || 'global';
+  const now = Date.now();
+  const windowMs = 60 * 1000;
+  const maxRequests = process.env.NODE_ENV === 'production' ? 120 : 1000;
+
+  const entries = requestCounts.get(key) || [];
+  const recent = entries.filter((ts) => now - ts < windowMs);
+  recent.push(now);
+  requestCounts.set(key, recent);
+
+  if (recent.length > maxRequests) {
+    return res.status(429).json({ error: 'Too many requests. Please try again shortly.' });
+  }
+
+  next();
+});
+
 // Routes
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/webhook', require('./routes/webhook'));
@@ -29,8 +80,27 @@ app.use('/api/accounts', require('./routes/accounts'));
 app.use('/api/attendees', require('./routes/attendees'));
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', worker: process.pid, timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    const inventoryState = await inventory.getAvailable();
+    res.json({
+      status: 'ok',
+      worker: process.pid,
+      timestamp: new Date().toISOString(),
+      inventory: inventoryState,
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
+app.get('/api/ready', async (req, res) => {
+  try {
+    await inventory.getAvailable();
+    res.json({ status: 'ready', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ status: 'not-ready', error: err.message });
+  }
 });
 
 app.get('*', (req, res) => {
@@ -59,8 +129,27 @@ sub.on('message', (channel, message) => {
 module.exports = app;
 
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Worker ${process.pid} started`);
+  initializeRuntime().then(() => {
+    const server = app.listen(PORT, () => {
+      console.log(`Worker ${process.pid} started on port ${PORT}`);
+    });
+
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, shutting down gracefully');
+      server.close(() => process.exit(0));
+    });
+
+    process.on('SIGINT', () => {
+      console.log('SIGINT received, shutting down gracefully');
+      server.close(() => process.exit(0));
+    });
+
+    if (!process.env.VERCEL) {
+      startEmailWorker();
+    }
+  }).catch((err) => {
+    console.error('[startup] server startup aborted:', err.message || err);
+    process.exit(1);
   });
-  startEmailWorker();
 }
+
