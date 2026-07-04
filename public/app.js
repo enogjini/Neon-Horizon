@@ -137,7 +137,12 @@ async function initiatePayment() {
     body: JSON.stringify(body),
   });
 
-  const data = await res.json();
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (e) {
+    data = { error: 'Payment request failed. Please try again.' };
+  }
 
   if (!res.ok) {
     throw new Error(data.error || `Server error ${res.status}`);

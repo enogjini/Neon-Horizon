@@ -59,74 +59,78 @@ async function finalizePayment(idempotency_key) {
  *
  * Idempotent: if a record with the same key already exists, return it as-is.
  */
-router.post('/', async (req, res) => {
-  const { idempotency_key, ticket_qty, customerName, customerEmail } = req.body;
+router.post('/', async (req, res, next) => {
+  try {
+    const { idempotency_key, ticket_qty, customerName, customerEmail } = req.body;
 
-  if (!idempotency_key || !ticket_qty) {
-    return res.status(400).json({ error: 'idempotency_key and ticket_qty are required' });
+    if (!idempotency_key || !ticket_qty) {
+      return res.status(400).json({ error: 'idempotency_key and ticket_qty are required' });
+    }
+
+    if (typeof idempotency_key !== 'string' || idempotency_key.trim().length < 3) {
+      return res.status(400).json({ error: 'idempotency_key must be a non-empty string' });
+    }
+
+    const qty = parseInt(ticket_qty, 10);
+    if (isNaN(qty) || qty < 1 || qty > 10) {
+      return res.status(400).json({ error: 'ticket_qty must be between 1 and 10' });
+    }
+
+    if (customerName !== undefined && typeof customerName !== 'string') {
+      return res.status(400).json({ error: 'customerName must be a string' });
+    }
+
+    if (customerEmail !== undefined && typeof customerEmail !== 'string') {
+      return res.status(400).json({ error: 'customerEmail must be a string' });
+    }
+
+    // ── Idempotency check ─────────────────────────────────────────────────────
+
+    const existing = await db.findByKey(idempotency_key);
+    if (existing) {
+      console.log(`[payments] replayed key=${idempotency_key} status=${existing.status} qty=${existing.ticket_qty}`);
+      const confirmation = existing.status === 'complete' && existing.email_sent_at
+        ? { status: 'sent', mode: 'already-sent', previewUrl: null, messageId: null }
+        : null;
+      return res.status(200).json({ ...existing, replayed: true, confirmation });
+    }
+    // ── Real-time Inventory Check ─────────────────────────────────────────────
+    const reserved = await inventory.reserve(qty);
+    if (!reserved) {
+      const remaining = await inventory.getAvailable();
+      console.warn(`[payments] sold_out key=${idempotency_key} requested=${qty} remaining=${remaining}`);
+      return res.status(403).json({ error: 'Tickets are currently sold out.', code: 'SOLD_OUT' });
+    }
+
+    // ── New payment: write to DB as pending ───────────────────────────────────
+    const amount_cents = qty * PRICE_PER_TICKET_CENTS;
+    const record = await db.insert({
+      idempotency_key,
+      ticket_qty: qty,
+      amount_cents,
+      customerName,
+      emailOrPhone: customerEmail
+    });
+
+    if (customerName || customerEmail) {
+      await db.addAttendee({ name: customerName, email: customerEmail });
+    }
+
+    console.log(`[payments] created id=${record.id} key=${idempotency_key} qty=${qty} amount_cents=${amount_cents}`);
+
+    // ── Call payment processor (simulated, non-blocking) ──────────────────────
+    // In production: POST to Stripe / Adyen / etc. with the idempotency_key header.
+    if (process.env.VERCEL) {
+      const { completedRecord } = await finalizePayment(idempotency_key);
+      return res.status(200).json({ ...completedRecord, replayed: false });
+    }
+
+    callMockProcessor(idempotency_key, amount_cents);
+    return res.status(202).json({ ...record, replayed: false });
+  } catch (err) {
+    console.error('[payments] request failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ error: 'Payment could not be processed. Please try again.' });
   }
-
-  if (typeof idempotency_key !== 'string' || idempotency_key.trim().length < 3) {
-    return res.status(400).json({ error: 'idempotency_key must be a non-empty string' });
-  }
-
-  const qty = parseInt(ticket_qty, 10);
-  if (isNaN(qty) || qty < 1 || qty > 10) {
-    return res.status(400).json({ error: 'ticket_qty must be between 1 and 10' });
-  }
-
-  if (customerName !== undefined && typeof customerName !== 'string') {
-    return res.status(400).json({ error: 'customerName must be a string' });
-  }
-
-  if (customerEmail !== undefined && typeof customerEmail !== 'string') {
-    return res.status(400).json({ error: 'customerEmail must be a string' });
-  }
-
-  // ── Idempotency check ─────────────────────────────────────────────────────
-
-  const existing = await db.findByKey(idempotency_key);
-  if (existing) {
-    console.log(`[payments] replayed key=${idempotency_key} status=${existing.status} qty=${existing.ticket_qty}`);
-    const confirmation = existing.status === 'complete' && existing.email_sent_at
-      ? { status: 'sent', mode: 'already-sent', previewUrl: null, messageId: null }
-      : null;
-    return res.status(200).json({ ...existing, replayed: true, confirmation });
-  }
-  // ── Real-time Inventory Check ─────────────────────────────────────────────
-  const reserved = await inventory.reserve(qty);
-  if (!reserved) {
-    const remaining = await inventory.getAvailable();
-    console.warn(`[payments] sold_out key=${idempotency_key} requested=${qty} remaining=${remaining}`);
-    return res.status(403).json({ error: 'Tickets are currently sold out.', code: 'SOLD_OUT' });
-  }
-
-
-  // ── New payment: write to DB as pending ───────────────────────────────────
-  const amount_cents = qty * PRICE_PER_TICKET_CENTS;
-  const record = await db.insert({ 
-    idempotency_key, 
-    ticket_qty: qty, 
-    amount_cents, 
-    customerName, 
-    emailOrPhone: customerEmail 
-  });
-
-  if (customerName || customerEmail) {
-    await db.addAttendee({ name: customerName, email: customerEmail });
-  }
-
-  console.log(`[payments] created id=${record.id} key=${idempotency_key} qty=${qty} amount_cents=${amount_cents}`);
-
-  // ── Call payment processor (simulated, non-blocking) ──────────────────────
-  // In production: POST to Stripe / Adyen / etc. with the idempotency_key header.
-  if (process.env.VERCEL) {
-    const { completedRecord } = await finalizePayment(idempotency_key);
-    return res.status(200).json({ ...completedRecord, replayed: false });
-  }
-
-  callMockProcessor(idempotency_key, amount_cents);
-  return res.status(202).json({ ...record, replayed: false });
 });
 
 /**

@@ -107,6 +107,20 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  if (err && (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.status === 400 && 'body' in err))) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+
+  console.error('[server] unhandled error:', err && err.stack ? err.stack : err);
+  const status = err && (err.status || err.statusCode) ? err.status || err.statusCode : 500;
+  return res.status(status).json({ error: err && err.message ? err.message : 'Internal server error' });
+});
+
 // ── Redis Pub/Sub for Cross-Worker Notifications ──────────────────────────
 const redisClient = require('./redisClient');
 const sub = redisClient.duplicate();

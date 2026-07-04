@@ -25,6 +25,26 @@ function post(path, body) {
   });
 }
 
+function postMalformedJson(path, rawBody) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(rawBody) },
+    }, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        let body;
+        try { body = JSON.parse(raw); } catch { body = null; }
+        resolve({ status: res.statusCode, raw, body });
+      });
+    });
+    req.on('error', reject);
+    req.write(rawBody);
+    req.end();
+  });
+}
+
 (async () => {
   console.log('\n── Test 1: POST /api/payments (new key) ──');
   const r1 = await post('/api/payments', { idempotency_key: KEY, ticket_qty: 2, ...CUSTOMER });
@@ -55,7 +75,12 @@ function post(path, body) {
   const ok4 = r4.status === 400;
   console.log('Status:', r4.status, ok4 ? '✅ PASS' : '❌ FAIL');
 
-  const passed = [ok1, ok2, ok3, ok4].filter(Boolean).length;
+  console.log('\n── Test 6: Malformed JSON → JSON error response ──');
+  const r5 = await postMalformedJson('/api/payments', '{bad json');
+  const ok5 = r5.status === 400 && r5.body && r5.body.error === 'Invalid JSON body';
+  console.log('Status:', r5.status, ok5 ? '✅ PASS' : '❌ FAIL');
+
+  const passed = [ok1, ok2, ok3, ok4, ok5].filter(Boolean).length;
   console.log(`\n${'─'.repeat(44)}`);
-  console.log(`Results: ${passed}/4 tests passed ${passed === 4 ? '🎉' : '⚠️'}`);
+  console.log(`Results: ${passed}/5 tests passed ${passed === 5 ? '🎉' : '⚠️'}`);
 })();
