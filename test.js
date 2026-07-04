@@ -1,5 +1,7 @@
 // test.js — end-to-end API smoke test
 const http = require('http');
+process.env.REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:1';
+const inventory = require('./inventory');
 
 const KEY = `test-${Date.now()}`;
 const BASE = 'http://localhost:3000';

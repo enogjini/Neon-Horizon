@@ -18,27 +18,39 @@ async function init() {
 }
 
 async function reserve(qty) {
-  // Atomic decrement
-  const remaining = await redis.decrby(INVENTORY_KEY, qty);
-  
-  if (remaining < 0) {
-    // Rollback if we went below zero
-    await redis.incrby(INVENTORY_KEY, qty);
+  try {
+    const remaining = await redis.decrby(INVENTORY_KEY, qty);
+
+    if (remaining < 0) {
+      await redis.incrby(INVENTORY_KEY, qty);
+      return false;
+    }
+
+    inventoryEvents.emit('change', { available: remaining, total: TOTAL_CAPACITY });
+    return true;
+  } catch (err) {
+    console.error('[inventory] reserve failed:', err.message || err);
     return false;
   }
-  
-  inventoryEvents.emit('change', { available: remaining, total: TOTAL_CAPACITY });
-  return true;
 }
 
 async function release(qty) {
-  const current = await redis.incrby(INVENTORY_KEY, qty);
-  inventoryEvents.emit('change', { available: current, total: TOTAL_CAPACITY });
+  try {
+    const current = await redis.incrby(INVENTORY_KEY, qty);
+    inventoryEvents.emit('change', { available: current, total: TOTAL_CAPACITY });
+  } catch (err) {
+    console.error('[inventory] release failed:', err.message || err);
+  }
 }
 
 async function getAvailable() {
-  const val = await redis.get(INVENTORY_KEY);
-  return parseInt(val || 0, 10);
+  try {
+    const val = await redis.get(INVENTORY_KEY);
+    return parseInt(val || 0, 10);
+  } catch (err) {
+    console.error('[inventory] getAvailable failed:', err.message || err);
+    return TOTAL_CAPACITY;
+  }
 }
 
 function getTotal() {

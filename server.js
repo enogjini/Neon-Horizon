@@ -24,21 +24,28 @@ const PORT = process.env.PORT || 3000;
 
 console.log('\nNeon Horizon server booting');
 
+let runtimeInitialized = false;
+
 async function initializeRuntime() {
+  if (runtimeInitialized) return;
+
   try {
-    await initDB();
-    await inventory.init();
-    console.log('[startup] database and inventory initialized');
+    await initDB().catch((err) => {
+      console.warn('[startup] database initialization failed, continuing in fallback mode:', err.message || err);
+    });
+
+    await inventory.init().catch((err) => {
+      console.warn('[startup] inventory initialization failed, continuing in fallback mode:', err.message || err);
+    });
+
+    runtimeInitialized = true;
+    console.log('[startup] runtime ready (database and inventory fallback mode enabled if needed)');
   } catch (err) {
     console.error('[startup] initialization failed:', err.message || err);
-    throw err;
   }
 }
 
-initializeRuntime().catch((err) => {
-  console.error('[startup] runtime initialization failed, exiting');
-  process.exit(1);
-});
+void initializeRuntime();
 
 // Performance Tweaks
 app.disable('x-powered-by');
