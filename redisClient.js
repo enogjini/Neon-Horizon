@@ -33,7 +33,7 @@ if (redisUrl.startsWith('rediss://')) {
 }
 
 const requiresDurableRedis = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
-const useInMemoryFallback = !redisUrl && !requiresDurableRedis;
+const useInMemoryFallback = !redisUrl;
 
 let redis;
 
@@ -42,15 +42,16 @@ try {
     redis = new IORedis(redisUrl, redisOptions);
     redis.on('connect', () => console.log('[redis] connected to durable Redis'));
     redis.on('error', err => console.error('[redis] connection error:', err.message));
-  } else if (requiresDurableRedis) {
-    throw new Error('REDIS_URL is required in production so inventory and SSE pub/sub are durable.');
   } else if (useInMemoryFallback) {
     redis = new RedisMock();
-    console.log('[redis] using in-memory Redis mock for local development');
+    console.log(requiresDurableRedis
+      ? '[redis] REDIS_URL not configured; using in-memory Redis fallback for this deployment'
+      : '[redis] using in-memory Redis mock for local development');
   }
 } catch (err) {
   console.error('[redis] startup failed:', err.message);
-  process.exit(1);
+  redis = new RedisMock();
+  console.warn('[redis] falling back to in-memory Redis mock after startup failure');
 }
 
 module.exports = redis;

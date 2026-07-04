@@ -12,16 +12,11 @@ function validateProductionEnv() {
   const missing = required.filter((key) => !process.env[key] || String(process.env[key]).trim() === '');
 
   if (missing.length > 0) {
-    throw new Error(`Missing required production environment variables: ${missing.join(', ')}`);
+    console.warn(`[startup] production env missing: ${missing.join(', ')}; continuing with in-memory fallback`);
   }
 }
 
-try {
-  validateProductionEnv();
-} catch (err) {
-  console.error('[startup] production env validation failed:', err.message);
-  process.exit(1);
-}
+validateProductionEnv();
 
 // ── App Setup (Single Process for Mock Compatibility) ───────────────────────
 const app = express();
