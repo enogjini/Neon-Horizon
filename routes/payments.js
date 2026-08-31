@@ -5,6 +5,7 @@ const sseClients = require('../sseClients');
 const inventory = require('../inventory');
 const emailOutbox = require('../emailOutbox');
 const redis = require('../redisClient');
+const { looksLikeEmail } = require('../mailer');
 
 // Price per ticket in cents ($45.00)
 const PRICE_PER_TICKET_CENTS = 4500;
@@ -85,6 +86,8 @@ router.post('/', async (req, res, next) => {
     }
 
     // ── Idempotency check ─────────────────────────────────────────────────────
+    // Runs before contact validation so a replayed key always returns its
+    // stored record unchanged.
 
     const existing = await db.findByKey(idempotency_key);
     if (existing) {
@@ -94,6 +97,17 @@ router.post('/', async (req, res, next) => {
         : null;
       return res.status(200).json({ ...existing, replayed: true, confirmation });
     }
+
+    const contact = typeof customerEmail === 'string' ? customerEmail.trim() : '';
+    if (!contact) {
+      return res.status(400).json({ error: 'customerEmail is required' });
+    }
+    // The checkout form collects an email address; require a valid one so the
+    // confirmation is actually deliverable instead of failing silently.
+    if (!looksLikeEmail(contact)) {
+      return res.status(400).json({ error: 'customerEmail is not a valid email address' });
+    }
+
     // ── Real-time Inventory Check ─────────────────────────────────────────────
     const reserved = await inventory.reserve(qty);
     if (!reserved) {
@@ -109,7 +123,8 @@ router.post('/', async (req, res, next) => {
       ticket_qty: qty,
       amount_cents,
       customerName,
-      emailOrPhone: customerEmail
+      emailOrPhone: customerEmail,
+      accountId: req.user ? req.user.id : null,
     });
 
     if (customerName || customerEmail) {

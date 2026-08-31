@@ -128,7 +128,11 @@ function fireWebhook(t, outcome) {
     port:     url.port || 80,
     path:     url.pathname,
     method:   'POST',
-    headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    headers:  {
+      'Content-Type':    'application/json',
+      'Content-Length':  Buffer.byteLength(body),
+      'X-Webhook-Secret': process.env.WEBHOOK_SECRET || 'dev-secret',
+    },
   };
 
   const req = http.request(opts, res => {

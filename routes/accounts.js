@@ -2,10 +2,21 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { hashPassword, verifyPassword } = require('../passwords');
+const {
+  createSessionToken,
+  setSessionCookie,
+  clearSessionCookie,
+  requireAuth,
+} = require('../auth');
 
 function normalizeIdentifier(value) {
   const identifier = String(value || '').trim();
   return identifier.includes('@') ? identifier.toLowerCase() : identifier;
+}
+
+function startSession(res, account) {
+  const token = createSessionToken({ sub: account.id, identifier: account.email_or_phone });
+  setSessionCookie(res, token);
 }
 
 /**
@@ -32,6 +43,7 @@ router.post('/signup', async (req, res) => {
   }
 
   const account = await db.createAccount({ emailOrPhone, passwordHash });
+  startSession(res, account);
   res.status(201).json({
     message: 'Account created successfully',
     emailOrPhone: account.email_or_phone,
@@ -54,8 +66,23 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid email/phone or password' });
   }
 
+  startSession(res, account);
   res.json({ message: 'Login successful', emailOrPhone: account.email_or_phone });
 });
 
+/**
+ * POST /api/accounts/logout
+ */
+router.post('/logout', (req, res) => {
+  clearSessionCookie(res);
+  res.json({ message: 'Logged out' });
+});
+
+/**
+ * GET /api/accounts/me — returns the current session's account, or 401.
+ */
+router.get('/me', requireAuth, (req, res) => {
+  res.json({ id: req.user.id, emailOrPhone: req.user.identifier });
+});
 
 module.exports = router;

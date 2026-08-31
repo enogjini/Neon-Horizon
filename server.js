@@ -4,9 +4,16 @@ const path = require('path');
 const inventory = require('./inventory');
 const { startEmailWorker } = require('./emailOutbox');
 const { initDB } = require('./pgClient');
+const { attachUser, assertSessionSecretConfigured } = require('./auth');
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
 
 function validateProductionEnv() {
-  if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') return;
+  if (!IS_PRODUCTION) return;
+
+  // Hard requirement: a production deployment must not sign sessions with the
+  // shared development key. Fail fast instead of 500-ing on first login.
+  assertSessionSecretConfigured();
 
   const required = ['DATABASE_URL', 'REDIS_URL'];
   const missing = required.filter((key) => !process.env[key] || String(process.env[key]).trim() === '');
@@ -51,9 +58,29 @@ void initializeRuntime();
 app.disable('x-powered-by');
 
 // Middleware
-app.use(require('cors')());
+//
+// CORS: browsers only enforce this for cross-origin requests. Same-origin calls
+// (the bundled frontend) always work. Configure ALLOWED_ORIGINS as a
+// comma-separated allowlist to permit specific external origins with credentials.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+app.use(require('cors')({
+  credentials: true,
+  origin(origin, callback) {
+    // No Origin header: same-origin navigation, curl, server-to-server, health checks.
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length > 0) return callback(null, allowedOrigins.includes(origin));
+    // No allowlist configured: permit any origin in development, none in production.
+    return callback(null, !IS_PRODUCTION);
+  },
+}));
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(attachUser);
 
 const requestCounts = new Map();
 app.use((req, res, next) => {
@@ -103,6 +130,11 @@ app.get('/api/ready', async (req, res) => {
   } catch (err) {
     res.status(503).json({ status: 'not-ready', error: err.message });
   }
+});
+
+// Unknown API routes return JSON 404 instead of falling through to the SPA shell.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
 app.get('*', (req, res) => {

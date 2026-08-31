@@ -1,4 +1,5 @@
 const express    = require('express');
+const crypto     = require('crypto');
 const router     = express.Router();
 const db         = require('../db');
 const sseClients = require('../sseClients');
@@ -8,10 +9,21 @@ const emailOutbox = require('../emailOutbox');
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'dev-secret';
 
+/** Constant-time secret comparison — avoids leaking the secret via response timing. */
+function secretMatches(provided) {
+  if (typeof provided !== 'string' || provided.length === 0) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(WEBHOOK_SECRET);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 router.post('/', async (req, res) => {
   const { idempotency_key, payment_id, processor_status, webhook_secret } = req.body;
 
-  if (webhook_secret !== WEBHOOK_SECRET) {
+  // Prefer the header; fall back to the body field for older processor builds.
+  const providedSecret = req.get('x-webhook-secret') || webhook_secret;
+  if (!secretMatches(providedSecret)) {
     console.warn('[webhook] rejected — invalid secret');
     return res.status(401).json({ error: 'Unauthorized' });
   }

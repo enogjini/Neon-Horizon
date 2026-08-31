@@ -101,6 +101,11 @@ async function initDB() {
     await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_cents INTEGER;');
     await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255);');
     await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS email_sent_at TIMESTAMP;');
+    await client.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;');
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_account ON payments (account_id);
+    `);
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_email_jobs_ready

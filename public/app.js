@@ -408,15 +408,30 @@ overlay.addEventListener('click', (e) => {
 
   bootstrapAvailability();
 
+  // Polling is the reliable path: SSE may be unavailable behind serverless
+  // platforms or multi-worker deployments. The stream below is a live-update
+  // optimisation layered on top.
+  let receivedFirstValue = false;
+  setInterval(bootstrapAvailability, 20000);
+
   const evtSource = new EventSource('/api/availability/status');
 
   evtSource.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    setAvailability(data);
+    try {
+      const data = JSON.parse(e.data);
+      receivedFirstValue = true;
+      setAvailability(data);
+    } catch (err) {
+      /* ignore malformed frame */
+    }
   };
 
   evtSource.onerror = () => {
-    availabilityText.textContent = 'Limited Tickets Available';
+    // Only show the vague fallback if we never got a real number; otherwise
+    // the polling loop keeps the displayed count accurate.
+    if (!receivedFirstValue) {
+      availabilityText.textContent = 'Limited Tickets Available';
+    }
   };
 })();
 

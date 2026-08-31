@@ -84,6 +84,45 @@ If Mailgun is configured, the app will use it before falling back to Brevo, Send
 ### Account Passwords
 Account signup stores `scrypt` password hashes through Node's built-in crypto module. Login verifies hashes with timing-safe comparison and never compares plain-text passwords.
 
+### Account Sessions
+`signup` and `login` now issue an HMAC-signed, stateless session token in an
+`HttpOnly` `SameSite=Lax` cookie (`nh_session`, `Secure` in production). Set
+`SESSION_SECRET` to a 32-byte random hex string — **production and Vercel
+deployments refuse to boot without it** rather than signing sessions with a
+shared dev key.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/accounts/signup` | Create account, start session |
+| `POST /api/accounts/login` | Verify credentials, start session |
+| `POST /api/accounts/logout` | Clear the session cookie |
+| `GET /api/accounts/me` | Current account, or `401` |
+
+When a request carries a valid session, `POST /api/payments` links the new
+payment to that account via `payments.account_id`.
+
+### CORS
+Browsers only enforce CORS for cross-origin calls; the bundled frontend is
+same-origin and always works. To let specific external origins call the API with
+credentials, set `ALLOWED_ORIGINS` to a comma-separated list. With no allowlist,
+any origin is accepted in development and none in production.
+
+### Request Validation
+`POST /api/payments` requires a syntactically valid `customerEmail` so the
+confirmation is deliverable instead of failing silently. Unknown `/api/*` routes
+return a JSON `404` instead of the SPA shell.
+
+### Webhook Authentication
+`POST /api/webhook` accepts the shared secret via the `X-Webhook-Secret` header
+(preferred) or the legacy `webhook_secret` body field, compared in constant time.
+
+### Real-time Availability
+The `/api/availability/status` SSE stream is a best-effort optimisation — it
+cannot span serverless function timeouts or multiple workers. The frontend polls
+`GET /api/availability` every 20s as the reliable path; the stream just delivers
+faster updates when it is available. Tune with `SSE_MAX_LIFETIME_MS` and
+`SSE_HEARTBEAT_MS`.
+
 Run database setup after pulling this version:
 
 ```bash

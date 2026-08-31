@@ -50,7 +50,7 @@ function createMemoryStore() {
     async findPaymentById(id) {
       return paymentsById.get(id) || null;
     },
-    async insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone }) {
+    async insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone, accountId }) {
       const record = {
         id: paymentSeq++,
         idempotency_key,
@@ -58,6 +58,7 @@ function createMemoryStore() {
         amount_cents,
         customer_name: customerName || null,
         email_or_phone: emailOrPhone || null,
+        account_id: accountId || null,
         status: 'pending',
         processor_id: null,
         email_sent_at: null,
@@ -229,8 +230,9 @@ async function findPaymentById(id) {
   }
 }
 
-async function insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone }) {
-  if (fallbackMode) return memoryStore.insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone });
+async function insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone, accountId }) {
+  const args = { idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone, accountId };
+  if (fallbackMode) return memoryStore.insert(args);
   try {
     const res = await pool.query(
       `
@@ -240,12 +242,13 @@ async function insert({ idempotency_key, ticket_qty, amount_cents, customerName,
           amount_cents,
           customer_name,
           email_or_phone,
+          account_id,
           status
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `,
-      [idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone, 'pending']
+      [idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone, accountId || null, 'pending']
     );
     const record = res.rows[0];
     if (record) {
@@ -253,7 +256,7 @@ async function insert({ idempotency_key, ticket_qty, amount_cents, customerName,
     }
     return record;
   } catch (err) {
-    return handleFallback(err, () => memoryStore.insert({ idempotency_key, ticket_qty, amount_cents, customerName, emailOrPhone }));
+    return handleFallback(err, () => memoryStore.insert(args));
   }
 }
 
