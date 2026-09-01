@@ -63,6 +63,9 @@ Set `REDIS_URL` in production. Without it, the app exits instead of silently fal
 ### Confirmation Email Outbox
 Payment completion now creates a durable `email_jobs` record with an idempotency key like `ticket-confirmation:<payment_id>`. The outbox worker claims ready jobs with PostgreSQL row locks, sends the confirmation through `mailer.js`, records the provider message id, and retries failed sends with backoff.
 
+### Weekly Inventory Reset
+The ticket pool refills to `INVENTORY_CAPACITY` (default `100`) at the start of each ISO week — Monday 00:00 UTC. The reset is lazy and needs no scheduler: on the first read or reservation of a new week, the first worker to notice claims the rollover with an atomic Redis `GETSET` on `tickets:week` and refills `tickets:available`; the others see the updated stamp and skip it. Restarts within a week keep the current count. Set `INVENTORY_RESET=never` to disable and hold the pool fixed.
+
 ### Mailgun setup
 Set these environment variables to send confirmation emails through Mailgun:
 
